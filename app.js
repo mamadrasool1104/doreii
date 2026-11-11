@@ -19,39 +19,193 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
+/* ---- Persian numbers & dates ---- */
 const faNum = new Intl.NumberFormat('fa-IR');
+const faPlain = new Intl.NumberFormat('fa-IR', { useGrouping: false });
+const toFaDigits = (s) => String(s ?? '').replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const fmtNum = (n) => (n == null || n === '' ? '—' : faNum.format(n));
 const fmtKm = (n) => (n == null ? '—' : faNum.format(n) + ' کیلومتر');
-const dateFmt = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'long', day: 'numeric', calendar: 'persian' });
-const dtFmt = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'persian' });
+const dateFmt = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'long', day: 'numeric', calendar: 'persian', numberingSystem: 'arabext' });
+const dtFmt = new Intl.DateTimeFormat('fa-IR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'persian', numberingSystem: 'arabext' });
 const fmtDate = (iso) => (iso ? dateFmt.format(new Date(iso + 'T12:00:00')) : '—');
 const fmtDateTime = (iso) => (iso ? dtFmt.format(new Date(iso)) : '');
-const todayISO = () => new Date().toLocaleDateString('en-CA');
+const pad2 = (n) => String(n).padStart(2, '0');
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
 
-// Accept Persian/Arabic digits and thousands separators in numeric fields.
+// Accept Persian/Arabic digits and separators typed by the user.
 const toAscii = (s) => String(s ?? '')
   .replace(/[۰-۹]/g, (d) => d.charCodeAt(0) - 0x06f0)
   .replace(/[٠-٩]/g, (d) => d.charCodeAt(0) - 0x0660)
   .replace(/[٬,\s]/g, '').replace(/٫/g, '.');
 const parseIntField = (s) => { const t = toAscii(s); return /^\d+$/.test(t) ? Number(t) : NaN; };
 const parseMoney = (s) => { const t = toAscii(s); if (t === '') return null; return /^\d+(\.\d{1,2})?$/.test(t) ? Number(t) : NaN; };
+const setNum = (inp, v) => { inp.value = v == null || v === '' ? '' : toFaDigits(v); };
 
+// Numeric fields always show Persian digits while typing.
+for (const inp of document.querySelectorAll('input[inputmode=numeric], input[inputmode=decimal]')) {
+  inp.addEventListener('input', () => { if (/\d/.test(inp.value)) inp.value = toFaDigits(inp.value); });
+}
+
+/* ---- Jalali (Shamsi) calendar conversion ---- */
+const jdiv = (a, b) => ~~(a / b);
+const jmod = (a, b) => a - ~~(a / b) * b;
+const J_BREAKS = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
+function jalCal(jy, withoutLeap) {
+  const bl = J_BREAKS.length, gy = jy + 621;
+  let leapJ = -14, jp = J_BREAKS[0], jm, jump = 0, leap, n;
+  if (jy < jp || jy >= J_BREAKS[bl - 1]) throw new Error('invalid jalali year');
+  for (let i = 1; i < bl; i += 1) {
+    jm = J_BREAKS[i]; jump = jm - jp;
+    if (jy < jm) break;
+    leapJ += jdiv(jump, 33) * 8 + jdiv(jmod(jump, 33), 4);
+    jp = jm;
+  }
+  n = jy - jp;
+  leapJ += jdiv(n, 33) * 8 + jdiv(jmod(n, 33) + 3, 4);
+  if (jmod(jump, 33) === 4 && jump - n === 4) leapJ += 1;
+  const leapG = jdiv(gy, 4) - jdiv((jdiv(gy, 100) + 1) * 3, 4) - 150;
+  const march = 20 + leapJ - leapG;
+  if (withoutLeap) return { gy, march };
+  if (jump - n < 6) n = n - jump + jdiv(jump + 4, 33) * 33;
+  leap = jmod(jmod(n + 1, 33) - 1, 4);
+  if (leap === -1) leap = 4;
+  return { leap, gy, march };
+}
+const g2d = (gy, gm, gd) => {
+  let d = jdiv((gy + jdiv(gm - 8, 6) + 100100) * 1461, 4) + jdiv(153 * jmod(gm + 9, 12) + 2, 5) + gd - 34840408;
+  d = d - jdiv(jdiv(gy + 100100 + jdiv(gm - 8, 6), 100) * 3, 4) + 752;
+  return d;
+};
+const d2g = (jdn) => {
+  let j = 4 * jdn + 139361631;
+  j += jdiv(jdiv(4 * jdn + 183187720, 146097) * 3, 4) * 4 - 3908;
+  const i = jdiv(jmod(j, 1461), 4) * 5 + 308;
+  const gd = jdiv(jmod(i, 153), 5) + 1;
+  const gm = jmod(jdiv(i, 153), 12) + 1;
+  const gy = jdiv(j, 1461) - 100100 + jdiv(8 - gm, 6);
+  return { gy, gm, gd };
+};
+const j2d = (jy, jm, jd) => {
+  const r = jalCal(jy, true);
+  return g2d(r.gy, 3, r.march) + (jm - 1) * 31 - jdiv(jm, 7) * (jm - 7) + jd - 1;
+};
+const d2j = (jdn) => {
+  const gy = d2g(jdn).gy;
+  let jy = gy - 621;
+  const r = jalCal(jy, false);
+  const jdn1f = g2d(gy, 3, r.march);
+  let k = jdn - jdn1f;
+  if (k >= 0) {
+    if (k <= 185) return { jy, jm: 1 + jdiv(k, 31), jd: jmod(k, 31) + 1 };
+    k -= 186;
+  } else {
+    jy -= 1; k += 179;
+    if (r.leap === 1) k += 1;
+  }
+  return { jy, jm: 7 + jdiv(k, 30), jd: jmod(k, 30) + 1 };
+};
+const toJalali = (gy, gm, gd) => d2j(g2d(gy, gm, gd));
+const toGregorian = (jy, jm, jd) => d2g(j2d(jy, jm, jd));
+const isJalaliLeap = (jy) => jalCal(jy, false).leap === 0;
+const jDaysInMonth = (jy, jm) => (jm <= 6 ? 31 : jm <= 11 ? 30 : isJalaliLeap(jy) ? 30 : 29);
+const J_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+
+/* ---- Jalali date picker (three selects: day / month / year) ---- */
+function initJDate(root) {
+  const optional = root.hasAttribute('data-optional');
+  const now = new Date();
+  const thisYear = toJalali(now.getFullYear(), now.getMonth() + 1, now.getDate()).jy;
+  const mk = (label) => el('select', { class: 'control', 'aria-label': label });
+  const day = mk('روز'), month = mk('ماه'), year = mk('سال');
+  const blank = (t) => el('option', { value: '' }, t);
+
+  if (optional) { month.append(blank('ماه')); year.append(blank('سال')); }
+  J_MONTHS.forEach((name, i) => month.append(el('option', { value: i + 1 }, name)));
+  for (let y = thisYear + 1; y >= thisYear - 25; y--) year.append(el('option', { value: y }, faPlain.format(y)));
+
+  function fillDays() {
+    const keep = day.value;
+    const y = Number(year.value), m = Number(month.value);
+    const max = y && m ? jDaysInMonth(y, m) : 31;
+    day.replaceChildren(...(optional ? [blank('روز')] : []));
+    for (let d = 1; d <= max; d++) day.append(el('option', { value: d }, faPlain.format(d)));
+    day.value = keep && Number(keep) <= max ? keep : (optional ? '' : String(max));
+  }
+  month.addEventListener('change', fillDays);
+  year.addEventListener('change', fillDays);
+  root.replaceChildren(day, month, year); // RTL: day sits on the right
+  fillDays();
+
+  root._jd = {
+    // '' = empty, null = incomplete, otherwise a Gregorian ISO date for the database
+    get() {
+      if (!day.value && !month.value && !year.value) return '';
+      if (!day.value || !month.value || !year.value) return null;
+      const { gy, gm, gd } = toGregorian(Number(year.value), Number(month.value), Number(day.value));
+      return `${gy}-${pad2(gm)}-${pad2(gd)}`;
+    },
+    set(iso) {
+      if (!iso) {
+        if (optional) { year.value = ''; month.value = ''; fillDays(); return; }
+        iso = todayISO();
+      }
+      const [gy, gm, gd] = iso.split('-').map(Number);
+      const j = toJalali(gy, gm, gd);
+      if (![...year.options].some((o) => o.value === String(j.jy))) year.append(el('option', { value: j.jy }, faPlain.format(j.jy)));
+      year.value = String(j.jy); month.value = String(j.jm); fillDays(); day.value = String(j.jd);
+    },
+  };
+  if (!optional) root._jd.set(todayISO());
+}
+for (const root of document.querySelectorAll('.jdate')) initJDate(root);
+const getDate = (sel) => $(sel)._jd.get();
+const setDate = (sel, v) => $(sel)._jd.set(v);
+
+/* ---- Labels ---- */
 const CATS = [5000, 10000, 20000, 40000, null];
-const catLabel = (c) => (c ? `هر ${fmtNum(c)} کیلومتر` : 'کارهای سفارشی / بدون زمان‌بندی');
-const STATUS_LABEL = { overdue: 'عقب‌افتاده', soon: 'نزدیک سررسید', ok: 'در موعد', none: 'بدون زمان‌بندی' };
+const inCat = (t, c) => (c ? t.interval_km === c : !CATS.includes(t.interval_km));
+const catLabel = (c) => (c ? `هر ${fmtNum(c)} کیلومتر` : 'کارهای سفارشی و بدون زمان‌بندی');
 const ROLE_LABEL = { admin: 'مدیر', member: 'عضو' };
 
-function show(view) {
-  for (const id of ['auth-view', 'denied-view', 'app-view']) $('#' + id).hidden = id !== view;
+/* ---- Persian-only error messages ---- */
+const hasPersian = (s) => /[؀-ۿ]/.test(s);
+const ERROR_RULES = [
+  ['invalid login credentials', 'ایمیل یا رمز عبور نادرست است.'],
+  ['email not confirmed', 'ایمیل شما هنوز تأیید نشده است. لینک ارسال‌شده به ایمیل را باز کنید.'],
+  ['user already registered', 'با این ایمیل قبلاً حساب ساخته شده است.'],
+  ['signups not allowed', 'ساخت حساب جدید غیرفعال است. از مدیر بخواهید شما را دعوت کند.'],
+  ['password should be', 'رمز عبور باید حداقل ۸ نویسه باشد.'],
+  ['invalid email', 'نشانی ایمیل معتبر نیست.'],
+  ['rate limit', 'تعداد درخواست‌ها زیاد است. کمی بعد دوباره تلاش کنید.'],
+  ['for security purposes', 'تعداد درخواست‌ها زیاد است. کمی بعد دوباره تلاش کنید.'],
+  ['failed to fetch', 'اتصال به اینترنت یا سرور برقرار نشد.'],
+  ['networkerror', 'اتصال به اینترنت یا سرور برقرار نشد.'],
+  ['load failed', 'اتصال به اینترنت یا سرور برقرار نشد.'],
+  ['jwt', 'نشست شما منقضی شده است. دوباره وارد شوید.'],
+  ['row-level security', 'شما اجازه انجام این کار را ندارید.'],
+  ['permission denied', 'شما اجازه انجام این کار را ندارید.'],
+  ['duplicate key', 'این مورد قبلاً ثبت شده است.'],
+  ['check constraint', 'مقدار واردشده معتبر نیست.'],
+];
+function errText(e) {
+  const raw = String((e && (e.message || e.error_description)) || e || '');
+  if (hasPersian(raw)) return raw;
+  const low = raw.toLowerCase();
+  for (const [key, msg] of ERROR_RULES) if (low.includes(key)) return msg;
+  return 'مشکلی پیش آمد. دوباره تلاش کنید.';
 }
+
+/* ---- UI feedback ---- */
+let bannerTimer;
 function banner(msg, kind = 'error') {
   const b = $('#banner');
+  clearTimeout(bannerTimer);
   if (!msg) { b.hidden = true; return; }
-  b.className = 'banner ' + kind;
+  b.className = 'banner banner--' + kind;
   b.textContent = msg;
   b.hidden = false;
+  if (kind === 'success') bannerTimer = setTimeout(() => { b.hidden = true; }, 4000);
 }
-const errText = (e) => (e && (e.message || e.error_description)) || 'مشکلی پیش آمد. دوباره تلاش کنید.';
 function inlineError(id, msg) { const b = $(id); b.textContent = msg || ''; b.hidden = !msg; }
 
 async function withBusy(button, busyText, fn) {
@@ -61,16 +215,32 @@ async function withBusy(button, busyText, fn) {
   try { return await fn(); } finally { button.disabled = false; button.textContent = prev; }
 }
 
-// Show a Jalali (Persian) preview under every date input.
-for (const inp of document.querySelectorAll('input[type=date]')) {
-  const sp = el('span', { class: 'fa-preview' });
-  inp.after(sp);
-  const upd = () => { sp.textContent = inp.value ? fmtDate(inp.value) : ''; };
-  inp.addEventListener('input', upd);
-  inp.addEventListener('change', upd);
-  inp._preview = upd;
+// Persian confirmation dialog (instead of the browser's native confirm()).
+function confirmDialog(message) {
+  return new Promise((resolve) => {
+    const d = $('#confirm-dialog');
+    $('#confirm-text').textContent = message;
+    const finish = (value) => {
+      $('#confirm-yes').onclick = null; $('#confirm-no').onclick = null;
+      d.removeEventListener('cancel', onCancel);
+      if (d.open) d.close();
+      resolve(value);
+    };
+    const onCancel = () => finish(false);
+    d.addEventListener('cancel', onCancel);
+    $('#confirm-yes').onclick = () => finish(true);
+    $('#confirm-no').onclick = () => finish(false);
+    d.showModal();
+  });
 }
-const setDate = (inp, v) => { inp.value = v || ''; inp._preview?.(); };
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function show(view) {
+  for (const id of ['auth-view', 'denied-view', 'app-view']) $('#' + id).hidden = id !== view;
+  $('#header-actions').hidden = view !== 'app-view';
+  $('#tabs').hidden = view !== 'app-view';
+}
 
 /* ================================================================== *
  * Supabase client
@@ -79,7 +249,7 @@ const configured = SUPABASE_URL && SUPABASE_ANON_KEY &&
   !SUPABASE_URL.includes('YOUR-PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR-ANON');
 if (!configured) {
   const box = $('#config-error');
-  box.textContent = 'Supabase تنظیم نشده است. فایل config.js را باز کنید و SUPABASE_URL و SUPABASE_ANON_KEY را وارد کنید (راهنمای README.md).';
+  box.textContent = 'اتصال به Supabase تنظیم نشده است. فایل config.js را باز کنید و مقدار SUPABASE_URL و SUPABASE_ANON_KEY را وارد کنید (راهنما در فایل README.md).';
   box.hidden = false;
   throw new Error('Supabase not configured');
 }
@@ -96,7 +266,6 @@ const state = {
   tasks: [],
   visits: [],            // each: {..., visit_tasks:[{task_id}], visit_notes:[...]}
   people: new Map(),     // user_id -> name
-  view: 'dashboard',
   channel: null,
   hasSubscribed: false,
   reloadTimer: null,
@@ -115,19 +284,24 @@ function setAuthMode(mode) {
   const up = mode === 'signup';
   $('#name-wrap').hidden = !up;
   $('#auth-submit').textContent = up ? 'ساخت حساب' : 'ورود';
-  $('#auth-toggle').textContent = up ? 'حساب دارم' : 'ساخت حساب جدید';
+  $('#auth-toggle').textContent = up ? 'قبلاً حساب ساخته‌ام' : 'ساخت حساب جدید';
   $('#auth-sub').textContent = up
     ? 'حساب بسازید و ایمیل خود را تأیید کنید. فقط اعضای دعوت‌شده به اطلاعات دسترسی دارند.'
     : 'برای دیدن اطلاعات مشترک خانواده وارد شوید.';
   $('#auth-password').autocomplete = up ? 'new-password' : 'current-password';
+  inlineError('#auth-error', '');
 }
 $('#auth-toggle').addEventListener('click', () => setAuthMode(state.authMode === 'signin' ? 'signup' : 'signin'));
 
 $('#auth-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   banner('');
+  inlineError('#auth-error', '');
   const email = $('#auth-email').value.trim();
   const password = $('#auth-password').value;
+  if (!EMAIL_RE.test(email)) return inlineError('#auth-error', 'نشانی ایمیل معتبر وارد کنید.');
+  if (!password) return inlineError('#auth-error', 'رمز عبور را وارد کنید.');
+  if (state.authMode === 'signup' && password.length < 8) return inlineError('#auth-error', 'رمز عبور باید حداقل ۸ نویسه باشد.');
   await withBusy($('#auth-submit'), 'لطفاً صبر کنید…', async () => {
     try {
       if (state.authMode === 'signup') {
@@ -140,7 +314,7 @@ $('#auth-form').addEventListener('submit', async (e) => {
         });
         if (error) throw error;
         if (!data.session) {
-          banner('حساب ساخته شد. ایمیل خود را بررسی و لینک تأیید را باز کنید، سپس وارد شوید.', 'info');
+          banner('حساب ساخته شد. ایمیل خود را بررسی کنید و لینک تأیید را باز کنید؛ سپس وارد شوید.', 'info');
           setAuthMode('signin');
         }
       } else {
@@ -148,7 +322,7 @@ $('#auth-form').addEventListener('submit', async (e) => {
         if (error) throw error;
       }
     } catch (err) {
-      banner(errText(err));
+      inlineError('#auth-error', errText(err));
     }
   });
 });
@@ -184,11 +358,11 @@ async function handleSession(session) {
 async function bootstrap(user) {
   banner('');
   show('app-view');
+  route();
   const ok = await loadAll(false);
   if (!ok) return;
   if (!state.member) { $('#denied-email').textContent = user.email || ''; show('denied-view'); return; }
   subscribe();
-  route();
 }
 
 /* ================================================================== *
@@ -211,9 +385,12 @@ async function loadAll(silent) {
     const me = members.data.find((m) => m.user_id === state.userId) || null;
     if (!me) { // not a member (or removed while online)
       state.member = null;
-      if (state.channel) teardownChannel();
-      if (!silent) $('#loading').hidden = true;
-      else { const { data } = await supabase.auth.getUser(); $('#denied-email').textContent = data.user?.email || ''; show('denied-view'); }
+      teardownChannel();
+      if (silent) {
+        const { data } = await supabase.auth.getUser();
+        $('#denied-email').textContent = data.user?.email || '';
+        show('denied-view');
+      }
       return true;
     }
     state.member = me;
@@ -257,6 +434,16 @@ function taskInfo(task) {
   return { last, nextDue, remaining, status, done };
 }
 
+// Visual status: done = green, upcoming = orange, overdue = red.
+function displayStatus(info, task) {
+  if (info.status === 'overdue') return { cls: 'overdue', label: 'عقب‌افتاده' };
+  if (info.status === 'soon') return { cls: 'upcoming', label: 'نزدیک سررسید' };
+  if (info.done) return { cls: 'done', label: 'انجام‌شده' };
+  if (task.interval_km) return { cls: 'upcoming', label: 'پیش‌رو' };
+  return { cls: 'none', label: 'ثبت نشده' };
+}
+const statusBadge = (s) => el('span', { class: 'badge badge--' + s.cls }, s.label);
+
 function lastVisit() {
   let best = null;
   for (const v of state.visits) {
@@ -275,104 +462,110 @@ function renderAll() {
   renderHistory();
 }
 
-function badge(status) { return el('span', { class: 'badge ' + status }, STATUS_LABEL[status]); }
+const stat = (label, value, cls = '') => el('div', { class: 'stat ' + cls },
+  el('span', { class: 'stat__label' }, label), el('span', { class: 'stat__value' }, value));
 
 function renderDashboard() {
-  const infos = state.tasks.map((t) => ({ t, i: taskInfo(t) }));
-  const overdue = infos.filter((x) => x.i.status === 'overdue');
-  const upcoming = infos.filter((x) => x.t.interval_km && x.i.status !== 'overdue')
-    .sort((a, b) => a.i.remaining - b.i.remaining);
-  const completed = infos.filter((x) => x.i.done)
+  const infos = state.tasks.map((t) => { const i = taskInfo(t); return { t, i, s: displayStatus(i, t) }; });
+  const overdue = infos.filter((x) => x.s.cls === 'overdue');
+  const pending = infos.filter((x) => x.s.cls === 'upcoming');
+  const doneList = infos.filter((x) => x.s.cls === 'done' || (x.i.done && x.s.cls !== 'overdue'))
     .sort((a, b) => b.i.last.service_date.localeCompare(a.i.last.service_date));
+  const upcoming = infos.filter((x) => x.t.interval_km && x.s.cls !== 'overdue')
+    .sort((a, b) => a.i.remaining - b.i.remaining);
   const lv = lastVisit();
 
-  const stat = (t, v, extra = '', cls = '') => el('div', { class: 'stat ' + cls }, el('span', {}, t), el('b', {}, v), extra && el('span', {}, extra));
+  const kmCard = el('div', { class: 'stat' },
+    el('span', { class: 'stat__label' }, 'کیلومتر فعلی'),
+    el('span', { class: 'stat__value' }, fmtKm(state.vehicle?.current_mileage)),
+    el('button', { class: 'btn btn--sm', type: 'button', onclick: openKmDialog }, 'ثبت کیلومتر جدید'));
   $('#dash-vehicle').replaceChildren(
-    stat('خودرو', state.vehicle?.name || '—', '', 'vehicle'),
-    el('div', { class: 'stat' }, el('span', {}, 'کیلومتر فعلی'), el('b', {}, fmtKm(state.vehicle?.current_mileage)),
-      el('button', { onclick: openKmDialog }, 'ثبت کیلومتر جدید')),
-    stat('آخرین تاریخ سرویس', lv ? fmtDate(lv.service_date) : 'هنوز ثبت نشده'),
-    stat('کیلومتر آخرین سرویس', lv ? fmtKm(lv.mileage) : '—'),
-  );
+    stat('خودرو', state.vehicle?.name || '—', 'stat--vehicle'),
+    kmCard,
+    stat('تاریخ آخرین سرویس', lv ? fmtDate(lv.service_date) : 'ثبت نشده'),
+    stat('کیلومتر آخرین سرویس', lv ? fmtKm(lv.mileage) : '—'));
 
-  $('#dash-alerts').replaceChildren(...(overdue.length ? [el('div', { class: 'banner warn' },
-    el('b', {}, `⚠ ${fmtNum(overdue.length)} سرویس عقب‌افتاده است: `),
-    overdue.map((x, k) => (k ? '، ' : '') + `${x.t.title} (${fmtNum(-x.i.remaining)} کیلومتر دیرتر از موعد)`).join(''))] : []));
+  $('#dash-counts').replaceChildren(
+    stat('عقب‌افتاده', fmtNum(overdue.length), 'stat--overdue'),
+    stat('پیش‌رو', fmtNum(pending.length), 'stat--upcoming'),
+    stat('انجام‌شده', fmtNum(doneList.length), 'stat--done'),
+    stat('کل سرویس‌های ثبت‌شده', fmtNum(state.visits.length)));
+
+  $('#dash-alerts').replaceChildren(...(overdue.length ? [el('div', { class: 'banner banner--error' },
+    el('b', {}, `هشدار: ${fmtNum(overdue.length)} سرویس عقب‌افتاده است. `),
+    overdue.map((x, k) => (k ? '، ' : '') + `${x.t.title} (${fmtKm(-x.i.remaining)} دیرتر از موعد)`).join(''))] : []));
 
   $('#dash-upcoming').replaceChildren(...(upcoming.length
-    ? upcoming.slice(0, 8).map(({ t, i }) => el('div', { class: 'item' },
-        el('div', { class: 'body' }, el('div', { class: 'title' }, t.title),
-          el('div', { class: 'sub' }, `در ${fmtKm(i.nextDue)} — ${fmtKm(i.remaining)} مانده`)),
-        badge(i.status)))
-    : [el('p', { class: 'muted' }, 'سرویس زمان‌بندی‌شده‌ای وجود ندارد.')]));
+    ? upcoming.slice(0, 8).map(({ t, i, s }) => el('div', { class: 'row-item' },
+        el('div', { class: 'row-item__body' }, el('div', { class: 'row-item__title' }, t.title),
+          el('div', { class: 'row-item__meta' }, `سررسید: ${fmtKm(i.nextDue)} · ${fmtKm(i.remaining)} مانده`)),
+        statusBadge(s.cls === 'done' ? { cls: 'upcoming', label: 'پیش‌رو' } : s)))
+    : [el('p', { class: 'empty' }, 'سرویس زمان‌بندی‌شده‌ای وجود ندارد.')]));
 
-  $('#dash-completed').replaceChildren(...(completed.length
-    ? completed.slice(0, 8).map(({ t, i }) => el('div', { class: 'item' },
-        el('div', { class: 'body' }, el('div', { class: 'title' }, '✅ ' + t.title),
-          el('div', { class: 'sub' }, `${fmtDate(i.last.service_date)} · ${fmtKm(i.last.mileage)}`))))
-    : [el('p', { class: 'muted' }, 'هنوز سرویسی ثبت نشده است.')]));
+  $('#dash-completed').replaceChildren(...(doneList.length
+    ? doneList.slice(0, 8).map(({ t, i }) => el('div', { class: 'row-item' },
+        el('div', { class: 'row-item__body' }, el('div', { class: 'row-item__title' }, t.title),
+          el('div', { class: 'row-item__meta' }, `${fmtDate(i.last.service_date)} · ${fmtKm(i.last.mileage)}`)),
+        statusBadge({ cls: 'done', label: 'انجام‌شده' })))
+    : [el('p', { class: 'empty' }, 'هنوز سرویسی ثبت نشده است.')]));
 
   $('#dash-recent').replaceChildren(...(state.visits.length
     ? state.visits.slice(0, 5).map(visitCard)
-    : [el('p', { class: 'muted' }, 'هنوز هیچ سرویسی ثبت نشده است. از بخش «تاریخچه سرویس» اولین مورد را ثبت کنید.')]));
+    : [el('p', { class: 'empty' }, 'هنوز هیچ سرویسی ثبت نشده است. از بخش «تاریخچه سرویس» اولین مورد را ثبت کنید.')]));
 }
 
 function renderChecklist() {
-  const body = $('#checklist-body');
-  const groups = CATS.map((c) => {
-    const items = state.tasks.filter((t) => (c ? t.interval_km === c : !t.interval_km || !CATS.includes(t.interval_km)));
-    return { c, items };
-  }).filter((g) => g.items.length);
-
-  body.replaceChildren(...groups.map(({ c, items }) => el('div', { class: 'group' },
-    el('h3', {}, catLabel(c)),
-    el('div', { class: 'card' }, items.map(taskRow)))));
+  const groups = CATS.map((c) => ({ c, items: state.tasks.filter((t) => inCat(t, c)) })).filter((g) => g.items.length);
+  $('#checklist-body').replaceChildren(...groups.map(({ c, items }) => el('div', { class: 'stack--sm' },
+    el('h3', { class: 'group-title' }, catLabel(c)),
+    el('div', { class: 'card card--flush' }, items.map(taskRow)))));
 }
 
 function taskRow(task) {
   const info = taskInfo(task);
+  const s = displayStatus(info, task);
   const { last } = info;
   const lastNote = last?.visit_notes.length ? last.visit_notes[last.visit_notes.length - 1].body : '';
   const box = el('input', {
-    type: 'checkbox', class: 'big', 'aria-label': task.title, checked: info.done,
+    type: 'checkbox', class: 'checkbox-lg', 'aria-label': task.title, checked: info.done,
     onclick: (e) => {
-      e.preventDefault(); // state only changes after the database confirms a change
+      e.preventDefault(); // the tick changes only after the database confirms the change
       if (info.done && last) openVisitDialog(last);
       else openQuickDialog(task);
     },
   });
-  return el('div', { class: 'item' }, box,
-    el('div', { class: 'body' },
-      el('div', { class: 'title' }, task.title, ' ', badge(info.status)),
-      last
-        ? el('div', { class: 'sub' }, `آخرین انجام: ${fmtDate(last.service_date)} · ${fmtKm(last.mileage)} · ثبت: ${person(last.created_by)}`)
-        : el('div', { class: 'sub' }, 'تاکنون ثبت نشده'),
-      task.interval_km && el('div', { class: 'sub' },
+  return el('div', { class: 'row-item' }, box,
+    el('div', { class: 'row-item__body' },
+      el('div', { class: 'row-item__title' }, task.title, statusBadge(s)),
+      el('div', { class: 'row-item__meta' }, last
+        ? `آخرین انجام: ${fmtDate(last.service_date)} · ${fmtKm(last.mileage)} · ثبت‌کننده: ${person(last.created_by)}`
+        : 'تاکنون ثبت نشده است'),
+      task.interval_km && el('div', { class: 'row-item__meta' + (info.remaining <= 0 ? ' row-item__meta--overdue' : '') },
         `سررسید بعدی: ${fmtKm(info.nextDue)}` + (info.remaining > 0 ? ` (${fmtKm(info.remaining)} مانده)` : ` (${fmtKm(-info.remaining)} دیرتر از موعد)`)),
-      lastNote && el('div', { class: 'sub' }, '📝 ' + (lastNote.length > 140 ? lastNote.slice(0, 140) + '…' : lastNote))));
+      lastNote && el('div', { class: 'row-item__meta' }, 'یادداشت: ' + (lastNote.length > 140 ? lastNote.slice(0, 140) + '…' : lastNote))));
 }
 
 function visitCard(v) {
   const tasks = v.visit_tasks.map((x) => taskById(x.task_id)).filter(Boolean);
   return el('article', { class: 'card visit' },
-    el('div', { class: 'head' },
-      el('span', { class: 'date' }, fmtDate(v.service_date) + ' · ' + fmtKm(v.mileage)),
-      el('button', { onclick: () => openVisitDialog(v) }, 'ویرایش / افزودن یادداشت')),
-    el('div', { class: 'meta' },
-      v.shop_name && el('span', {}, '🔧 ' + v.shop_name),
-      v.total_cost != null && el('span', {}, '💰 ' + fmtNum(Number(v.total_cost)) + ' تومان'),
+    el('div', { class: 'visit__head' },
+      el('span', { class: 'visit__date' }, fmtDate(v.service_date) + ' · ' + fmtKm(v.mileage)),
+      el('button', { class: 'btn btn--sm', type: 'button', onclick: () => openVisitDialog(v) }, 'ویرایش و افزودن یادداشت')),
+    el('div', { class: 'visit__meta' },
+      v.shop_name && el('span', {}, 'تعمیرگاه: ' + v.shop_name),
+      v.total_cost != null && el('span', {}, 'هزینه: ' + fmtNum(Number(v.total_cost)) + ' تومان'),
       el('span', {}, 'ثبت‌کننده: ' + person(v.created_by)),
       v.updated_by && v.updated_by !== v.created_by && el('span', {}, 'آخرین ویرایش: ' + person(v.updated_by))),
     tasks.length ? el('div', { class: 'chips' }, tasks.map((t) => el('span', { class: 'chip' }, t.title))) : null,
-    v.parts_replaced && el('div', {}, el('span', { class: 'muted' }, 'قطعات: '), v.parts_replaced),
+    v.parts_replaced && el('div', {}, el('span', { class: 'muted' }, 'قطعات تعویض‌شده: '), v.parts_replaced),
     v.visit_notes.length ? el('div', { class: 'notes' }, v.visit_notes.map((n) => el('div', { class: 'note' }, n.body,
-      el('small', {}, `${person(n.created_by)} · ${fmtDateTime(n.created_at)}`)))) : null);
+      el('span', { class: 'note__by' }, `${person(n.created_by)} · ${fmtDateTime(n.created_at)}`)))) : null);
 }
 
 /* ---- History filters ---- */
 function filteredVisits() {
   const q = $('#h-search').value.trim().toLowerCase();
-  const from = $('#h-from').value, to = $('#h-to').value;
+  const from = getDate('#h-from'), to = getDate('#h-to');
   const kmMin = parseIntField($('#h-kmmin').value), kmMax = parseIntField($('#h-kmmax').value);
   const cat = $('#h-cat').value;
   return state.visits.filter((v) => {
@@ -381,14 +574,11 @@ function filteredVisits() {
     if (!Number.isNaN(kmMin) && v.mileage < kmMin) return false;
     if (!Number.isNaN(kmMax) && v.mileage > kmMax) return false;
     const tasks = v.visit_tasks.map((x) => taskById(x.task_id)).filter(Boolean);
-    if (cat) {
-      const hit = tasks.some((t) => (cat === 'custom' ? !CATS.includes(t.interval_km) : t.interval_km === Number(cat)));
-      if (!hit) return false;
-    }
+    if (cat && !tasks.some((t) => (cat === 'custom' ? inCat(t, null) : t.interval_km === Number(cat)))) return false;
     if (q) {
       const hay = [v.shop_name, v.parts_replaced, person(v.created_by), ...v.visit_notes.map((n) => n.body), ...tasks.map((t) => t.title)]
         .filter(Boolean).join(' ').toLowerCase();
-      if (!hay.includes(toAscii(q).toLowerCase()) && !hay.includes(q)) return false;
+      if (!hay.includes(q) && !hay.includes(toAscii(q))) return false;
     }
     return true;
   });
@@ -396,22 +586,20 @@ function filteredVisits() {
 
 function renderHistory() {
   const rows = filteredVisits();
-  $('#h-count').textContent = `${fmtNum(rows.length)} از ${fmtNum(state.visits.length)} سرویس`;
+  $('#h-count').textContent = `${fmtNum(rows.length)} مورد از ${fmtNum(state.visits.length)} سرویس`;
   $('#history-list').replaceChildren(...(rows.length ? rows.map(visitCard)
-    : [el('p', { class: 'muted', style: 'text-align:center;padding:30px' },
-        state.visits.length ? 'موردی با این فیلترها پیدا نشد.' : 'هنوز هیچ سرویسی ثبت نشده است.')]));
+    : [el('p', { class: 'empty' }, state.visits.length ? 'موردی با این فیلترها پیدا نشد.' : 'هنوز هیچ سرویسی ثبت نشده است.')]));
 }
-for (const id of ['#h-search', '#h-from', '#h-to', '#h-kmmin', '#h-kmmax', '#h-cat']) {
-  $(id).addEventListener('input', renderHistory);
-}
+for (const id of ['#h-search', '#h-kmmin', '#h-kmmax', '#h-cat']) $(id).addEventListener('input', renderHistory);
+for (const id of ['#h-from', '#h-to']) $(id).addEventListener('change', renderHistory);
 $('#h-reset').addEventListener('click', () => {
   for (const id of ['#h-search', '#h-kmmin', '#h-kmmax']) $(id).value = '';
-  setDate($('#h-from'), ''); setDate($('#h-to'), '');
+  setDate('#h-from', ''); setDate('#h-to', '');
   $('#h-cat').value = '';
   renderHistory();
 });
 
-/* ---- CSV export (Excel-compatible) ---- */
+/* ---- CSV export (opens in Excel) ---- */
 function csvCell(v, text = true) {
   let s = String(v ?? '');
   if (text && /^[=+\-@\t\r]/.test(s)) s = "'" + s; // neutralise spreadsheet formulas
@@ -420,7 +608,7 @@ function csvCell(v, text = true) {
 $('#btn-export').addEventListener('click', () => {
   const rows = filteredVisits();
   if (!rows.length) { banner('موردی برای خروجی گرفتن وجود ندارد.', 'info'); return; }
-  const head = ['تاریخ (میلادی)', 'تاریخ (شمسی)', 'کیلومتر', 'تعمیرگاه', 'کارهای انجام‌شده', 'قطعات تعویض‌شده', 'هزینه کل (تومان)', 'یادداشت‌ها', 'ثبت‌کننده'];
+  const head = ['تاریخ میلادی', 'تاریخ شمسی', 'کیلومتر', 'تعمیرگاه', 'کارهای انجام‌شده', 'قطعات تعویض‌شده', 'هزینه کل (تومان)', 'یادداشت‌ها', 'ثبت‌کننده'];
   const lines = [head.map((h) => csvCell(h)).join(',')];
   for (const v of rows) {
     const tasks = v.visit_tasks.map((x) => taskById(x.task_id)?.title).filter(Boolean).join(' | ');
@@ -431,39 +619,40 @@ $('#btn-export').addEventListener('click', () => {
     ].join(','));
   }
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: `service-history-${todayISO()}.csv` });
+  const a = el('a', { href: URL.createObjectURL(blob), download: 'تاریخچه-سرویس-پراید.csv' });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  banner('فایل خروجی آماده شد.', 'success');
 });
 
 /* ================================================================== *
- * Dialogs: service visit (create / edit / add notes)
+ * Dialog: service visit (create / edit / add notes)
  * ================================================================== */
-function openVisitDialog(visit = null, presetTaskIds = []) {
+function openVisitDialog(visit = null) {
   state.editingVisitId = visit ? visit.id : null;
-  $('#visit-title').textContent = visit ? 'ویرایش سرویس / افزودن یادداشت' : 'ثبت سرویس جدید';
+  $('#visit-title').textContent = visit ? 'ویرایش سرویس و افزودن یادداشت' : 'ثبت سرویس جدید';
   inlineError('#visit-error', '');
-  setDate($('#v-date'), visit?.service_date ?? todayISO());
-  $('#v-km').value = visit ? visit.mileage : (currentKm() || '');
+  setDate('#v-date', visit?.service_date ?? todayISO());
+  setNum($('#v-km'), visit ? visit.mileage : (currentKm() || ''));
   $('#v-shop').value = visit?.shop_name ?? '';
-  $('#v-cost').value = visit?.total_cost ?? '';
+  setNum($('#v-cost'), visit?.total_cost != null ? Number(visit.total_cost) : '');
   $('#v-parts').value = visit?.parts_replaced ?? '';
   $('#v-note').value = '';
   $('#v-note-label').textContent = visit ? 'افزودن یادداشت جدید (یادداشت‌های قبلی حفظ می‌شوند)' : 'یادداشت';
 
-  const selected = new Set(visit ? visit.visit_tasks.map((x) => x.task_id) : presetTaskIds);
+  const selected = new Set(visit ? visit.visit_tasks.map((x) => x.task_id) : []);
   $('#v-tasks').replaceChildren(...CATS.flatMap((c) => {
-    const items = state.tasks.filter((t) => (c ? t.interval_km === c : !t.interval_km || !CATS.includes(t.interval_km)));
+    const items = state.tasks.filter((t) => inCat(t, c));
     if (!items.length) return [];
-    return [el('h4', {}, catLabel(c)),
-      ...items.map((t) => el('label', { class: 'chk' },
-        el('input', { type: 'checkbox', value: t.id, checked: selected.has(t.id) }), t.title))];
+    return [el('div', { class: 'picklist__group' }, catLabel(c)),
+      ...items.map((t) => el('label', { class: 'check' },
+        el('input', { type: 'checkbox', class: 'check__box', value: t.id, checked: selected.has(t.id) }), t.title))];
   }));
 
-  $('#v-oldnotes').replaceChildren(...(visit?.visit_notes.length ? [
-    el('label', {}, 'یادداشت‌های قبلی'),
-    ...visit.visit_notes.map((n) => el('div', { class: 'note' }, n.body,
-      el('small', {}, `${person(n.created_by)} · ${fmtDateTime(n.created_at)}`)))] : []));
+  const old = visit?.visit_notes ?? [];
+  $('#v-oldnotes-wrap').hidden = !old.length;
+  $('#v-oldnotes').replaceChildren(...old.map((n) => el('div', { class: 'note' }, n.body,
+    el('span', { class: 'note__by' }, `${person(n.created_by)} · ${fmtDateTime(n.created_at)}`))));
   $('#visit-dialog').showModal();
 }
 $('#btn-new-visit').addEventListener('click', () => openVisitDialog());
@@ -481,19 +670,23 @@ async function saveVisit({ id, date, km, shop, parts, cost, taskIds, note }) {
 $('#visit-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   inlineError('#visit-error', '');
+  const date = getDate('#v-date');
   const km = parseIntField($('#v-km').value);
   const cost = parseMoney($('#v-cost').value);
-  if (Number.isNaN(km)) return inlineError('#visit-error', 'کیلومتر را فقط با عدد وارد کنید.');
+  if (!date) return inlineError('#visit-error', 'تاریخ سرویس را کامل انتخاب کنید.');
+  if (Number.isNaN(km)) return inlineError('#visit-error', 'کیلومتر خودرو را با عدد وارد کنید.');
   if (Number.isNaN(cost)) return inlineError('#visit-error', 'هزینه را فقط با عدد وارد کنید.');
   if (!state.vehicle) return inlineError('#visit-error', 'خودرویی در پایگاه داده پیدا نشد. فایل schema.sql را اجرا کنید.');
   const taskIds = [...$('#v-tasks').querySelectorAll('input:checked')].map((i) => i.value);
+  const editing = !!state.editingVisitId;
   await withBusy($('#visit-save'), 'در حال ذخیره…', async () => {
     try {
       await saveVisit({
-        id: state.editingVisitId, date: $('#v-date').value, km, shop: $('#v-shop').value, parts: $('#v-parts').value,
+        id: state.editingVisitId, date, km, shop: $('#v-shop').value, parts: $('#v-parts').value,
         cost, taskIds, note: $('#v-note').value,
       });
       $('#visit-dialog').close();
+      banner(editing ? 'تغییرات سرویس ذخیره شد.' : 'سرویس جدید ثبت شد.', 'success');
     } catch (err) {
       inlineError('#visit-error', 'ذخیره نشد: ' + errText(err));
     }
@@ -505,8 +698,8 @@ function openQuickDialog(task) {
   state.quickTask = task;
   $('#quick-title').textContent = 'ثبت انجام: ' + task.title;
   inlineError('#quick-error', '');
-  setDate($('#q-date'), todayISO());
-  $('#q-km').value = currentKm() || '';
+  setDate('#q-date', todayISO());
+  setNum($('#q-km'), currentKm() || '');
   $('#q-shop').value = '';
   $('#q-note').value = '';
   $('#quick-dialog').showModal();
@@ -515,16 +708,19 @@ $('#quick-cancel').addEventListener('click', () => $('#quick-dialog').close());
 $('#quick-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   inlineError('#quick-error', '');
+  const date = getDate('#q-date');
   const km = parseIntField($('#q-km').value);
-  if (Number.isNaN(km)) return inlineError('#quick-error', 'کیلومتر را فقط با عدد وارد کنید.');
+  if (!date) return inlineError('#quick-error', 'تاریخ انجام را کامل انتخاب کنید.');
+  if (Number.isNaN(km)) return inlineError('#quick-error', 'کیلومتر خودرو را با عدد وارد کنید.');
   if (!state.vehicle) return inlineError('#quick-error', 'خودرویی در پایگاه داده پیدا نشد.');
   await withBusy($('#quick-save'), 'در حال ثبت…', async () => {
     try {
       await saveVisit({
-        id: null, date: $('#q-date').value, km, shop: $('#q-shop').value, parts: null, cost: null,
+        id: null, date, km, shop: $('#q-shop').value, parts: null, cost: null,
         taskIds: [state.quickTask.id], note: $('#q-note').value,
       });
       $('#quick-dialog').close();
+      banner('انجام سرویس ثبت شد.', 'success');
     } catch (err) {
       inlineError('#quick-error', 'ثبت نشد: ' + errText(err));
     }
@@ -541,16 +737,19 @@ $('#task-cancel').addEventListener('click', () => $('#task-dialog').close());
 $('#task-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   inlineError('#task-error', '');
+  const title = $('#t-title').value.trim();
   const raw = $('#t-km').value.trim();
   const km = raw === '' ? null : parseIntField(raw);
+  if (!title) return inlineError('#task-error', 'عنوان کار را وارد کنید.');
   if (km !== null && (Number.isNaN(km) || km <= 0)) return inlineError('#task-error', 'کیلومتر تکرار باید یک عدد مثبت باشد.');
   await withBusy($('#task-save'), 'در حال افزودن…', async () => {
     try {
       const { error } = await supabase.from('maintenance_tasks')
-        .insert({ title: $('#t-title').value.trim(), interval_km: km, is_custom: true, sort_order: 1000 });
+        .insert({ title, interval_km: km, is_custom: true, sort_order: 1000 });
       if (error) throw error.code === '23505' ? new Error('این کار قبلاً در فهرست وجود دارد.') : error;
       await loadAll(true);
       $('#task-dialog').close();
+      banner('کار سفارشی به چک‌لیست اضافه شد.', 'success');
     } catch (err) {
       inlineError('#task-error', 'افزوده نشد: ' + errText(err));
     }
@@ -560,7 +759,7 @@ $('#task-form').addEventListener('submit', async (e) => {
 /* ---- Current mileage ---- */
 function openKmDialog() {
   inlineError('#km-error', '');
-  $('#k-km').value = currentKm() || '';
+  setNum($('#k-km'), currentKm() || '');
   $('#km-dialog').showModal();
 }
 $('#km-cancel').addEventListener('click', () => $('#km-dialog').close());
@@ -568,7 +767,7 @@ $('#km-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   inlineError('#km-error', '');
   const km = parseIntField($('#k-km').value);
-  if (Number.isNaN(km)) return inlineError('#km-error', 'کیلومتر را فقط با عدد وارد کنید.');
+  if (Number.isNaN(km)) return inlineError('#km-error', 'کیلومتر را با عدد وارد کنید.');
   if (!state.vehicle) return inlineError('#km-error', 'خودرویی در پایگاه داده پیدا نشد.');
   await withBusy($('#km-save'), 'در حال ذخیره…', async () => {
     try {
@@ -576,6 +775,7 @@ $('#km-form').addEventListener('submit', async (e) => {
       if (error) throw error;
       await loadAll(true);
       $('#km-dialog').close();
+      banner('کیلومتر فعلی ذخیره شد.', 'success');
     } catch (err) {
       inlineError('#km-error', 'ذخیره نشد: ' + errText(err));
     }
@@ -596,8 +796,9 @@ async function loadMembers() {
     if (e2) throw e2;
     const rows = members.map((m) => el('tr', {},
       el('td', {}, m.display_name || '—'),
-      el('td', { class: 'muted', dir: 'ltr' }, m.email),
+      el('td', {}, el('span', { class: 'ltr muted' }, m.email)),
       el('td', {}, el('select', {
+        class: 'control', 'aria-label': 'نقش',
         onchange: async (ev) => {
           inlineError('#members-error', '');
           const { error: err } = await supabase.from('family_members').update({ role: ev.target.value }).eq('user_id', m.user_id);
@@ -606,32 +807,34 @@ async function loadMembers() {
       }, el('option', { value: 'member', selected: m.role === 'member' }, 'عضو'),
          el('option', { value: 'admin', selected: m.role === 'admin' }, 'مدیر'))),
       el('td', {}, m.user_id === state.userId ? el('span', { class: 'muted' }, 'شما') : el('button', {
-        class: 'danger',
+        class: 'btn btn--sm btn--danger', type: 'button',
         onclick: async () => {
-          if (!confirm(`${m.email} از خانواده حذف شود؟ (سوابق ثبت‌شده او باقی می‌ماند)`)) return;
+          if (!(await confirmDialog(`«${m.display_name || m.email}» از فهرست خانواده حذف شود؟ سوابق ثبت‌شده توسط او باقی می‌ماند.`))) return;
           inlineError('#members-error', '');
           const { error: err } = await supabase.from('family_members').delete().eq('user_id', m.user_id);
           if (err) inlineError('#members-error', errText(err)); else loadMembers();
         },
       }, 'حذف'))));
     const inviteRows = invites.map((i) => el('tr', {},
-      el('td', { colspan: 2, dir: 'ltr' }, i.email), el('td', {}, ROLE_LABEL[i.role] + ' (دعوت‌شده)'),
+      el('td', { colspan: 2 }, el('span', { class: 'ltr muted' }, i.email)),
+      el('td', {}, ROLE_LABEL[i.role] + ' (دعوت‌شده)'),
       el('td', {}, el('button', {
+        class: 'btn btn--sm', type: 'button',
         onclick: async () => {
           const { error: err } = await supabase.from('family_invites').delete().eq('email', i.email);
           if (err) inlineError('#members-error', errText(err)); else loadMembers();
         },
-      }, 'لغو'))));
+      }, 'لغو دعوت'))));
     body.className = '';
-    body.replaceChildren(el('table', { class: 'simple' }, el('tbody', {}, rows, inviteRows)));
+    body.replaceChildren(el('table', { class: 'table' }, el('tbody', {}, rows, inviteRows)));
   } catch (err) {
-    body.className = '';
+    body.className = 'empty';
     body.textContent = 'خطا در دریافت اعضا: ' + errText(err);
   }
 }
 $('#btn-members').addEventListener('click', () => {
   inlineError('#members-error', '');
-  $('#members-body').className = 'spinner';
+  $('#members-body').className = 'loading';
   $('#members-body').textContent = 'در حال دریافت…';
   $('#members-dialog').showModal();
   loadMembers();
@@ -640,11 +843,15 @@ $('#members-close').addEventListener('click', () => $('#members-dialog').close()
 $('#invite-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   inlineError('#members-error', '');
+  const email = $('#invite-email').value.trim();
+  if (!EMAIL_RE.test(email)) return inlineError('#members-error', 'نشانی ایمیل معتبر وارد کنید.');
   await withBusy($('#invite-submit'), 'در حال دعوت…', async () => {
-    const { data, error } = await supabase.rpc('invite_member', { p_email: $('#invite-email').value, p_role: $('#invite-role').value });
+    const { data, error } = await supabase.rpc('invite_member', { p_email: email, p_role: $('#invite-role').value });
     if (error) { inlineError('#members-error', errText(error)); return; }
     $('#invite-email').value = '';
-    if (data === 'invited') banner('دعوت ثبت شد. او باید با همین ایمیل حساب بسازد و ایمیلش را تأیید کند؛ سپس خودکار دسترسی می‌گیرد.', 'info');
+    banner(data === 'invited'
+      ? 'دعوت ثبت شد. او باید با همین ایمیل حساب بسازد و ایمیلش را تأیید کند؛ سپس خودکار دسترسی می‌گیرد.'
+      : 'این فرد قبلاً حساب داشت و اکنون عضو خانواده شد.', data === 'invited' ? 'info' : 'success');
     loadMembers();
   });
 });
@@ -652,7 +859,7 @@ $('#invite-form').addEventListener('submit', async (e) => {
 /* ================================================================== *
  * Realtime sync
  * ================================================================== */
-function setSync(kind, text) { const s = $('#sync'); s.className = 'sync ' + kind; s.textContent = text; }
+function setSync(kind, text) { const s = $('#sync'); s.className = 'sync' + (kind ? ' sync--' + kind : ''); s.textContent = text; }
 
 function scheduleReload() {
   clearTimeout(state.reloadTimer);
@@ -675,7 +882,7 @@ function subscribe() {
       if (state.hasSubscribed) loadAll(true); // reconnected: catch up on anything missed
       state.hasSubscribed = true;
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-      setSync('off', 'آفلاین – تلاش مجدد…');
+      setSync('off', 'آفلاین، در حال تلاش مجدد…');
     }
   });
 }
@@ -694,9 +901,10 @@ function teardown() {
  * ================================================================== */
 function route() {
   const v = location.hash.replace('#', '');
-  state.view = ['dashboard', 'checklist', 'history'].includes(v) ? v : 'dashboard';
-  for (const name of ['dashboard', 'checklist', 'history']) $('#view-' + name).hidden = name !== state.view;
-  for (const a of document.querySelectorAll('#tabs a')) a.classList.toggle('active', a.dataset.view === state.view);
+  const view = ['dashboard', 'checklist', 'history'].includes(v) ? v : 'dashboard';
+  for (const name of ['dashboard', 'checklist', 'history']) $('#view-' + name).hidden = name !== view;
+  for (const a of document.querySelectorAll('.tabs__link')) a.classList.toggle('is-active', a.dataset.view === view);
+  window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', route);
 
