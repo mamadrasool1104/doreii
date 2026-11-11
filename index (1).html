@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>سرویس خودرو خانواده</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="config-error" class="banner error" hidden></div>
+  <div id="banner" class="banner" hidden role="alert"></div>
+
+  <!-- ورود / ثبت‌نام -->
+  <section id="auth-view" hidden>
+    <div class="card auth-card">
+      <div class="brand big">🚗 سرویس خودرو خانواده</div>
+      <p class="muted" id="auth-sub">برای دیدن اطلاعات مشترک خانواده وارد شوید.</p>
+      <form id="auth-form">
+        <div id="name-wrap" hidden>
+          <label for="auth-name">نام شما</label>
+          <input id="auth-name" autocomplete="name">
+        </div>
+        <label for="auth-email">ایمیل</label>
+        <input id="auth-email" type="email" required autocomplete="email" dir="ltr">
+        <label for="auth-password">رمز عبور (حداقل ۸ کاراکتر)</label>
+        <input id="auth-password" type="password" required minlength="8" autocomplete="current-password" dir="ltr">
+        <div class="row gap" style="margin-top:18px">
+          <button class="primary" id="auth-submit" type="submit">ورود</button>
+          <button type="button" id="auth-toggle">ساخت حساب جدید</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- حساب تأیید شده ولی عضو خانواده نیست -->
+  <section id="denied-view" hidden>
+    <div class="card auth-card">
+      <h2 style="margin-top:0">دسترسی هنوز فعال نشده است</h2>
+      <p>شما با ایمیل <b id="denied-email" dir="ltr"></b> وارد شده‌اید، اما این حساب در فهرست اعضای خانواده نیست.
+         از مدیر خانواده بخواهید این ایمیل را دعوت کند، سپس دوباره بررسی کنید.</p>
+      <div class="row gap">
+        <button class="primary" id="denied-retry">بررسی دوباره</button>
+        <button id="denied-signout">خروج</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- برنامه اصلی -->
+  <section id="app-view" hidden>
+    <header class="top">
+      <div class="row gap">
+        <span class="brand">🚗 سرویس خودرو خانواده</span>
+        <span id="sync" class="sync">در حال اتصال…</span>
+      </div>
+      <div class="row gap">
+        <span class="muted" id="who"></span>
+        <button id="btn-members" hidden>اعضای خانواده</button>
+        <button id="btn-signout">خروج</button>
+      </div>
+    </header>
+    <nav class="tabs" id="tabs">
+      <a href="#dashboard" data-view="dashboard">داشبورد</a>
+      <a href="#checklist" data-view="checklist">چک‌لیست سرویس</a>
+      <a href="#history" data-view="history">تاریخچه سرویس</a>
+    </nav>
+    <main>
+      <div id="loading" class="spinner" hidden>در حال دریافت اطلاعات از پایگاه داده ابری…</div>
+
+      <section id="view-dashboard" hidden>
+        <div id="dash-vehicle" class="stats"></div>
+        <div id="dash-alerts"></div>
+        <div class="grid-2">
+          <div class="card"><h2>سرویس‌های پیش‌رو</h2><div id="dash-upcoming"></div></div>
+          <div class="card"><h2>سرویس‌های انجام‌شده</h2><div id="dash-completed"></div></div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <div class="row between"><h2 style="margin:0">آخرین سرویس‌ها</h2>
+            <a class="linkbtn" href="#history">همه تاریخچه ←</a></div>
+          <div id="dash-recent"></div>
+        </div>
+      </section>
+
+      <section id="view-checklist" hidden>
+        <div class="row between wrap">
+          <h2 style="margin:0">چک‌لیست سرویس</h2>
+          <button class="primary" id="btn-add-task">+ افزودن کار سفارشی</button>
+        </div>
+        <p class="muted">با تیک زدن هر مورد، تاریخ، کیلومتر و یادداشت سرویس را ثبت کنید. با رسیدن کیلومتر به موعد بعدی، تیک خودکار برداشته می‌شود؛ سوابق قبلی هیچ‌گاه حذف نمی‌شوند.</p>
+        <div id="checklist-body"></div>
+      </section>
+
+      <section id="view-history" hidden>
+        <div class="row between wrap">
+          <h2 style="margin:0">تاریخچه سرویس</h2>
+          <div class="row gap">
+            <button id="btn-export">دریافت خروجی Excel / CSV</button>
+            <button class="primary" id="btn-new-visit">+ ثبت سرویس جدید</button>
+          </div>
+        </div>
+        <div class="card filters">
+          <input id="h-search" type="search" placeholder="جستجو در تعمیرگاه، قطعات، یادداشت‌ها و کارها…">
+          <div class="grid-filters">
+            <div><label for="h-from">از تاریخ</label><input id="h-from" type="date"></div>
+            <div><label for="h-to">تا تاریخ</label><input id="h-to" type="date"></div>
+            <div><label for="h-kmmin">کیلومتر از</label><input id="h-kmmin" inputmode="numeric" placeholder="مثلاً ۱۰۰۰۰"></div>
+            <div><label for="h-kmmax">کیلومتر تا</label><input id="h-kmmax" inputmode="numeric"></div>
+            <div><label for="h-cat">دسته‌بندی</label>
+              <select id="h-cat">
+                <option value="">همه دسته‌ها</option>
+                <option value="5000">هر ۵٬۰۰۰ کیلومتر</option>
+                <option value="10000">هر ۱۰٬۰۰۰ کیلومتر</option>
+                <option value="20000">هر ۲۰٬۰۰۰ کیلومتر</option>
+                <option value="40000">هر ۴۰٬۰۰۰ کیلومتر</option>
+                <option value="custom">کارهای سفارشی</option>
+              </select></div>
+          </div>
+          <div class="row between"><span class="muted" id="h-count"></span><button id="h-reset" type="button">پاک کردن فیلترها</button></div>
+        </div>
+        <div id="history-list"></div>
+      </section>
+    </main>
+  </section>
+
+  <!-- ثبت / ویرایش سرویس -->
+  <dialog id="visit-dialog">
+    <form id="visit-form">
+      <h2 id="visit-title" style="margin-top:0">ثبت سرویس جدید</h2>
+      <div class="grid-2">
+        <div><label for="v-date">تاریخ سرویس *</label><input id="v-date" type="date" required></div>
+        <div><label for="v-km">کیلومتر خودرو *</label><input id="v-km" inputmode="numeric" required placeholder="مثلاً ۴۵۲۰۰"></div>
+        <div><label for="v-shop">نام تعمیرگاه (اختیاری)</label><input id="v-shop" maxlength="200"></div>
+        <div><label for="v-cost">هزینه کل (اختیاری)</label><input id="v-cost" inputmode="decimal"></div>
+      </div>
+      <label>کارهای انجام‌شده (چند انتخابی)</label>
+      <div id="v-tasks" class="taskpick"></div>
+      <label for="v-parts">قطعات تعویض‌شده</label>
+      <textarea id="v-parts" maxlength="5000" placeholder="مثلاً: روغن موتور ۴ لیتر، فیلتر روغن…"></textarea>
+      <div id="v-oldnotes"></div>
+      <label for="v-note" id="v-note-label">یادداشت</label>
+      <textarea id="v-note" maxlength="5000" placeholder="مشاهدات و توضیحات…"></textarea>
+      <div class="banner error" id="visit-error" hidden style="margin:12px 0 0"></div>
+      <div class="row gap end" style="margin-top:16px">
+        <button type="button" id="visit-cancel">انصراف</button>
+        <button class="primary" type="submit" id="visit-save">ذخیره</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ثبت سریع یک مورد چک‌لیست -->
+  <dialog id="quick-dialog">
+    <form id="quick-form">
+      <h2 id="quick-title" style="margin-top:0">ثبت انجام سرویس</h2>
+      <div class="grid-2">
+        <div><label for="q-date">تاریخ انجام *</label><input id="q-date" type="date" required></div>
+        <div><label for="q-km">کیلومتر خودرو *</label><input id="q-km" inputmode="numeric" required></div>
+      </div>
+      <label for="q-shop">نام تعمیرگاه (اختیاری)</label>
+      <input id="q-shop" maxlength="200">
+      <label for="q-note">یادداشت</label>
+      <textarea id="q-note" maxlength="5000"></textarea>
+      <div class="banner error" id="quick-error" hidden style="margin:12px 0 0"></div>
+      <div class="row gap end" style="margin-top:16px">
+        <button type="button" id="quick-cancel">انصراف</button>
+        <button class="primary" type="submit" id="quick-save">ثبت</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- کار سفارشی -->
+  <dialog id="task-dialog">
+    <form id="task-form">
+      <h2 style="margin-top:0">افزودن کار سفارشی</h2>
+      <label for="t-title">عنوان کار *</label>
+      <input id="t-title" required maxlength="200" placeholder="مثلاً: تعویض لامپ‌ها">
+      <label for="t-km">تکرار هر چند کیلومتر؟ (اختیاری)</label>
+      <input id="t-km" inputmode="numeric" placeholder="خالی = بدون زمان‌بندی">
+      <div class="banner error" id="task-error" hidden style="margin:12px 0 0"></div>
+      <div class="row gap end" style="margin-top:16px">
+        <button type="button" id="task-cancel">انصراف</button>
+        <button class="primary" type="submit" id="task-save">افزودن</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- کیلومتر فعلی -->
+  <dialog id="km-dialog">
+    <form id="km-form">
+      <h2 style="margin-top:0">ثبت کیلومتر فعلی خودرو</h2>
+      <label for="k-km">کیلومتر فعلی *</label>
+      <input id="k-km" inputmode="numeric" required>
+      <div class="banner error" id="km-error" hidden style="margin:12px 0 0"></div>
+      <div class="row gap end" style="margin-top:16px">
+        <button type="button" id="km-cancel">انصراف</button>
+        <button class="primary" type="submit" id="km-save">ذخیره</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- اعضا (مدیر) -->
+  <dialog id="members-dialog">
+    <h2 style="margin-top:0">اعضای خانواده</h2>
+    <div id="members-body" class="spinner">در حال دریافت…</div>
+    <h3>دعوت عضو جدید</h3>
+    <form id="invite-form" class="row gap">
+      <input id="invite-email" type="email" placeholder="email@example.com" required dir="ltr" style="flex:1 1 200px; width:auto">
+      <select id="invite-role" style="width:auto"><option value="member">عضو</option><option value="admin">مدیر</option></select>
+      <button class="primary" id="invite-submit" type="submit">دعوت</button>
+    </form>
+    <div class="banner error" id="members-error" hidden style="margin:12px 0 0"></div>
+    <div class="row gap end" style="margin-top:16px"><button id="members-close">بستن</button></div>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
